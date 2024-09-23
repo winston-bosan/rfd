@@ -16,6 +16,7 @@ pub(crate) struct Filter {
 ///   * Linux
 ///   * Windows
 ///   * Mac
+///   * iOS (in progress)
 #[derive(Default, Debug, Clone)]
 pub struct FileDialog {
     pub(crate) filters: Vec<Filter>,
