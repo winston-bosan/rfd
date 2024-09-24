@@ -2,15 +2,12 @@ use block2::Block;
 use objc2::mutability::MainThreadOnly;
 use objc2::rc::Id;
 use objc2::ClassType;
-use objc2_ui_kit::{NSApplication, NSModalResponse, NSWindow};
 use objc2_foundation::{run_on_main, MainThreadMarker};
 
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use std::task::{Context, Poll, Waker};
-
-use super::utils::activate_cocoa_multithreading;
 
 pub(super) trait AsModal {
     fn inner_modal(&self) -> &(impl InnerModal + 'static);
@@ -136,4 +133,17 @@ impl<R, D> std::future::Future for ModalFuture<R, D> {
             Poll::Pending
         }
     }
+}
+
+
+/// Helpter functioins directly borrowed from MacOS impl
+
+use objc2_foundation::{NSThread};
+use raw_window_handle::RawWindowHandle;
+// use objc2_app_kit::{NSApplication, NSView, NSWindow};
+
+
+pub fn activate_cocoa_multithreading() {
+    let thread = NSThread::new();
+    unsafe { thread.start() };
 }

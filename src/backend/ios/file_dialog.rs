@@ -1,6 +1,10 @@
+use std::future::Future;
+use futures::future::Shared;
+use objc2::{msg_send, ClassType};
+use objc2::rc::Id;
 use objc2::runtime::Object;
 use objc2_ui_kit::{
-    self as ui_kit, UIDocumentPickerMode, UIDocumentPickerDelegate,
+    self as ui_kit, UIDocumentPickerDelegate, UIDocumentPickerMode, UIDocumentPickerViewController, UIViewController
 };
 use crate::{FileDialog, FileHandle};
 
@@ -14,50 +18,51 @@ struct FileDialogParams {
     dialog_type: FileDialogType,
     allow_editing: bool,
     source_type: ui_kit::UIImagePickerControllerSourceType,
-    allowed_uti_types: Option<Vec<NSString>>,
+    allowed_uti_types: Option<Vec<String>>,
     file_extensions_filter: Option<Vec<String>>,
 }
 
-use crate::backend::AsyncFilePickerDialogImpl;
-impl AsyncFilePickerDialogImpl for FileDialog {
-    fn pick_file_async(self) -> DialogFutureType<Option<FileHandle>> {
-        let win = self.parent.as_ref().map(window_from_raw_window_handle);
+use crate::backend::{AsyncFilePickerDialogImpl, DialogFutureType};
 
-        let future = ModalFuture::new(
-            win,
-            move |mtm| Panel::build_pick_file(&self, mtm),
-            |panel, res_id| {
-                if res_id == NSModalResponseOK {
-                    Some(panel.get_result().into())
-                } else {
-                    None
-                }
-            },
-        );
+use super::modal_future::{ModalFuture};
+
+impl AsyncFilePickerDialogImpl for FileDialog {
+    fn pick_file_async(self) -> DialogFutureType<Option<FileHandle>> {   
+        
+        let view_controller: Option<Id<UIViewController>> = unsafe {
+            msg_send![UIApplication::shared_application(), keyWindow().rootViewController()]
+        };
+
+        if let Some(view_controller) = view_controller {
+            let document_types = {
+                NSArray::from_vec(vec![
+                    NSString::from("public.text"),
+                    NSString::from("public.content"),
+                    NSString::from("public.item"),
+                    NSString::from("public.data"),
+                ])
+            };
+
+            let document_picker = unsafe { UIDocumentPickerViewController::initForOpeningContentTypes(&document_types) };
+
+            view_controller.presentViewController(document_picker, true, None);
+        } else {
+            result.set_result(Some("Getting rootViewController failed".to_string()));
+        }
+
+
+
+        let future = async move {
+            unsafe { 
+                UIDocumentPickerViewController::initForOpeningContentTypes(),
+            };
+        };
 
         Box::pin(future)
     }
 
     fn pick_files_async(self) -> DialogFutureType<Option<Vec<FileHandle>>> {
-        let win = self.parent.as_ref().map(window_from_raw_window_handle);
 
-        let future = ModalFuture::new(
-            win,
-            move |mtm| Panel::build_pick_files(&self, mtm),
-            |panel, res_id| {
-                if res_id == NSModalResponseOK {
-                    Some(
-                        panel
-                            .get_results()
-                            .into_iter()
-                            .map(FileHandle::wrap)
-                            .collect(),
-                    )
-                } else {
-                    None
-                }
-            },
-        );
 
         Box::pin(future)
     }
@@ -129,7 +134,7 @@ impl AsyncFilePickerDialogImpl for FileDialog {
 //     #[sel(pickDirectory:result:)]
 //     fn pick_directory(&self, result: FlutterResult) {
 //         self.flutter_result = result.clone();
-//         self.is_pick_directory = true;
+//         self.is_pick_directory = true;()
 
 //         let view_controller: Option<Id<UIViewController, Shared>> = unsafe {
 //             msg_send![UIApplication::shared_application(), keyWindow().rootViewController()]

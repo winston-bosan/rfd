@@ -69,8 +69,9 @@ objc2-ui-kit = { version = "0.2.2", features = [
   "UIDocumentPickerViewController",
   "UIApplication",
   "UIViewController",
-    "UIImagePickerController",  
-
+  "UIResponder",
+  "UIImagePickerController",
+  "objc2-uniform-type-identifiers"  
 ] }
 
 
