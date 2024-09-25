@@ -1,12 +1,233 @@
-use std::future::Future;
-use futures::future::Shared;
-use objc2::{msg_send, ClassType};
-use objc2::rc::Id;
-use objc2::runtime::Object;
+use std::path::PathBuf;
+use std::ptr;
+use crate::{FileDialog, FileHandle, MessageDialog, MessageDialogResult};
+use objc2::msg_send;
+use objc2::rc::{autoreleasepool, Id};
+use objc2::runtime::{NSZone, Object, Sel, YES as YES_CONST};
+use objc2::ClassType;
+use objc2_foundation::{MainThreadMarker, NSArray, NSData, NSString, NSURL};
 use objc2_ui_kit::{
-    self as ui_kit, UIDocumentPickerDelegate, UIDocumentPickerMode, UIDocumentPickerViewController, UIViewController
+    self as ui_kit, UIDocumentPickerDelegate, UIDocumentPickerViewController, UIViewController,
 };
-use crate::{FileDialog, FileHandle};
+
+// Assuming you have these utilities defined elsewhere
+use lazy_static::lazy_static;
+use objc2_uniform_type_identifiers::UTType;
+use std::sync::Mutex;
+
+use objc2::__framework_prelude::{IsMainThreadOnly, ProtocolObject};
+use objc2::rc::{Allocated, Retained};
+use objc2::{declare_class, msg_send_id, mutability, DeclaredClass};
+use objc2_foundation::{NSCopying, NSObject, NSObjectProtocol};
+
+// Module lvl static file marker, not the proudest moment of my life
+pub static CHOSEN_FILE: Mutex<(Option<String>, Option<String>)> = Mutex::new((None, None));
+
+use crate::backend::FilePickerDialogImpl;
+impl FilePickerDialogImpl for FileDialog {
+    fn pick_file(self) -> Option<PathBuf> {
+        autoreleasepool(move |_| {
+            run_on_ios_main(move |mtm| {
+                let callback_checker = present_document_picker(mtm);
+
+                if callback_checker.get_uri_history() == 0 {
+                    Some(callback_checker.get_uri_history().to_string().into()) // JUST JANK FOR NOW
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    fn pick_files(self) -> Option<Vec<PathBuf>> {
+        todo!()
+    }
+}
+
+use crate::backend::AsyncFilePickerDialogImpl;
+impl AsyncFilePickerDialogImpl for FileDialog {
+    fn pick_file_async(self) -> DialogFutureType<Option<FileHandle>> {
+        todo!()
+    }
+
+    fn pick_files_async(self) -> DialogFutureType<Option<Vec<FileHandle>>> {
+        todo!()
+    }
+}
+
+use crate::backend::FolderPickerDialogImpl;
+impl FolderPickerDialogImpl for FileDialog {
+    fn pick_folder(self) -> Option<PathBuf> {
+        todo!()
+    }
+
+    fn pick_folders(self) -> Option<Vec<PathBuf>> {
+        todo!()
+    }
+}
+
+use crate::backend::AsyncFolderPickerDialogImpl;
+impl AsyncFolderPickerDialogImpl for FileDialog {
+    fn pick_folder_async(self) -> DialogFutureType<Option<FileHandle>> {
+        todo!()
+    }
+
+    fn pick_folders_async(self) -> DialogFutureType<Option<Vec<FileHandle>>> {
+        todo!()
+    }
+}
+
+// -- File Saving --
+
+use crate::backend::FileSaveDialogImpl;
+impl FileSaveDialogImpl for FileDialog {
+    fn save_file(self) -> Option<PathBuf> {
+        todo!()
+    }
+}
+
+use crate::backend::AsyncFileSaveDialogImpl;
+impl AsyncFileSaveDialogImpl for FileDialog {
+    fn save_file_async(self) -> DialogFutureType<Option<FileHandle>> {
+        todo!()
+    }
+}
+
+// --- Message Dialog Temp ---
+
+
+use crate::backend::MessageDialogImpl;
+
+use crate::backend::AsyncMessageDialogImpl;
+impl MessageDialogImpl for MessageDialog {
+    fn show(self) -> MessageDialogResult {
+        todo!()
+    }
+}
+impl AsyncMessageDialogImpl for MessageDialog {
+    fn show_async(self) -> DialogFutureType<MessageDialogResult> {
+        todo!()
+    }
+}
+
+// --- ObjC setup below ---
+
+#[derive(Clone)]
+struct UriHistory {
+    last_uri: [u8; 200],
+}
+
+impl UIDocPickerDelegate {
+    fn report_uri_retrieved() -> Option<String> {
+        todo!()
+    }
+}
+
+declare_class!(
+    struct UIDocPickerDelegate;
+
+    // SAFETY:
+    // - The superclass NSObject does not have any subclassing requirements.
+    // - Interior mutability is a safe default, but we need .
+    // - `UIDocPickerDelegate` does not implement `Drop`.
+    unsafe impl ClassType for UIDocPickerDelegate {
+        type Super = NSObject;
+        type Mutability = mutability::MainThreadOnly;
+        const NAME: &'static str = "UIDocPickerDelegate";
+    }
+
+    impl DeclaredClass for UIDocPickerDelegate {
+        type Ivars = UriHistory;
+    }
+
+    unsafe impl UIDocPickerDelegate {
+        #[method_id(init:)]
+        fn init_with(this: Allocated<Self>) -> Option<Retained<Self>> {
+            let this = this.set_ivars(UriHistory {
+                last_uri: [0;200],
+            });
+            unsafe { msg_send_id![super(this), init] }
+        }
+
+        #[method(get_history)]
+        fn __get_history(&self) -> [u8; 200] {
+            self.ivars().last_uri.clone()
+        }
+    }
+
+    unsafe impl NSObjectProtocol for UIDocPickerDelegate {}
+
+    unsafe impl UIDocumentPickerDelegate for UIDocPickerDelegate {
+        #[method(documentPicker:didPickDocumentsAtURLs:)]
+        unsafe fn documentPicker_didPickDocumentsAtURLs(
+            &self,
+            controller: &UIDocumentPickerViewController,
+            urls: &NSArray<NSURL>,
+        ) {
+            // TODO: Temporary place holder to test if this impl compiles or not
+            unsafe {
+                // Get the first selected URL
+                let selected_url:Retained<NSURL> = (*urls).firstObject().unwrap();
+                // Convert NSString to Rust String -> todo!()
+                // let rust_str: String = selected_url.to_string();
+                println!("({:?})", &selected_url);
+
+                // if !selected_url.clone().isFileURL() {
+                //     // Start accessing the security scoped resource
+                //     let access_granted: bool = msg_send![selected_url.clone(), startAccessingSecurityScopedResource];
+                //
+                //     if access_granted {
+                //         // Read the file content as a string
+                //         let ns_string: *mut NSString = msg_send![NSString, stringWithContentsOfURL:selected_url encoding:4 /* NSUTF8StringEncoding */ error:ptr::null_mut()];
+                //         // Stop accessing the resource
+                //         msg_send![selected_url, stopAccessingSecurityScopedResource];
+                //
+                //         if !ns_string.is_null() {
+                //             // Convert NSString to Rust String
+                //             let rust_str: String = ns_string.to_string();
+                //             println!("({})", &rust_str);
+                //         } else {
+                //             // Handle read error
+                //             println!("Error - Failed to read the file content.");
+                //         }
+                //     } else {
+                //         // Handle access denial
+                //         println!("Error - Failed to access the selected file.");
+                //     }
+                // }
+            }
+        }
+
+        #[method(documentPickerWasCancelled:)]
+        unsafe fn documentPickerWasCancelled(&self, controller: &UIDocumentPickerViewController){
+
+        }
+
+        #[method(documentPicker:didPickDocumentAtURL:)]
+        unsafe fn documentPicker_didPickDocumentAtURL(
+            &self,
+            controller: &UIDocumentPickerViewController,
+            url: &NSURL,
+        ){
+
+        }
+
+    }
+);
+
+impl UIDocPickerDelegate {
+    pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        unsafe { msg_send_id![mtm.alloc::<UIDocPickerDelegate>(), init] }
+    }
+
+
+
+    pub fn get_uri_history(&self) -> u8 {
+        unsafe { msg_send![self, get_history] }
+    }
+}
+
+// --- Example Above ---
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum FileDialogType {
@@ -22,54 +243,83 @@ struct FileDialogParams {
     file_extensions_filter: Option<Vec<String>>,
 }
 
-use crate::backend::{AsyncFilePickerDialogImpl, DialogFutureType};
+use crate::backend::{DialogFutureType};
+use crate::backend::ios::util::run_on_ios_main;
 
-use super::modal_future::{ModalFuture};
 
-impl AsyncFilePickerDialogImpl for FileDialog {
-    fn pick_file_async(self) -> DialogFutureType<Option<FileHandle>> {   
-        
-        let view_controller: Option<Id<UIViewController>> = unsafe {
-            msg_send![UIApplication::shared_application(), keyWindow().rootViewController()]
-        };
+// Placeholder for your error handling and other utilities
+fn show_message(msg: &str) {
+    // Implement your message display logic
+}
 
-        if let Some(view_controller) = view_controller {
-            let document_types = {
-                NSArray::from_vec(vec![
-                    NSString::from("public.text"),
-                    NSString::from("public.content"),
-                    NSString::from("public.item"),
-                    NSString::from("public.data"),
-                ])
-            };
+fn show_error(err: &str) {
+    // Implement your error display logic
+}
 
-            let document_picker = unsafe { UIDocumentPickerViewController::initForOpeningContentTypes(&document_types) };
+fn ttl(s: &str) -> &str {
+    // Placeholder for translation/localization
+    s
+}
+struct Error {
+    msg: String,
+}
 
-            view_controller.presentViewController(document_picker, true, None);
-        } else {
-            result.set_result(Some("Getting rootViewController failed".to_string()));
+impl Error {
+    fn msg(msg: &str) -> Self {
+        Self {
+            msg: msg.to_string(),
         }
-
-
-
-        let future = async move {
-            unsafe { 
-                UIDocumentPickerViewController::initForOpeningContentTypes(),
-            };
-        };
-
-        Box::pin(future)
     }
 
-    fn pick_files_async(self) -> DialogFutureType<Option<Vec<FileHandle>>> {
-
-
-        Box::pin(future)
+    fn context(&self, context: &str) -> String {
+        format!("{}: {}", context, self.msg)
     }
 }
 
+// How do we define the PickerDelegate class implementing UIDocumentPickerDelegate
 
+// Function to present the document picker
+fn present_document_picker(mtm: MainThreadMarker) -> Retained<UIDocPickerDelegate> {
+    use objc2::rc::Id;
+    use objc2_ui_kit::UIDocumentPickerViewController;
+    use objc2_uniform_type_identifiers;
 
+    unsafe {
+        // Initialize the PickerDelegate instance
+        let delegate = UIDocPickerDelegate::new(mtm);
+
+        // Create the UIDocumentPickerViewController
+        let picker  = if available("14.0.0") {
+            let csv = UTType::typeWithFilenameExtension(&*NSString::from_str("csv")).unwrap();
+            let pleco = UTType::typeWithFilenameExtension(&*NSString::from_str("pleco")).unwrap();
+            let apkg = UTType::typeWithFilenameExtension(&*NSString::from_str("apkg")).unwrap();
+
+            let types = NSArray::from_slice(&[csv.as_ref(), pleco.as_ref(), apkg.as_ref()]);
+            let allocated_picker = mtm.alloc::<UIDocumentPickerViewController>();
+            // let picker_init  = UIDocumentPickerViewController::init(allocated_picker);
+
+            UIDocumentPickerViewController::initForOpeningContentTypes(allocated_picker, &types)
+        } else {
+            panic!()
+        };
+
+        // Set the delegate and do the protocol cast
+        let ui_doc_picker_dyn_protocol_obj: &ProtocolObject<dyn UIDocumentPickerDelegate> =
+            ProtocolObject::from_ref(&*delegate);
+        picker.setDelegate(Option::from(ui_doc_picker_dyn_protocol_obj));
+
+        // Get the current view controller (so jank I am shitting myself)
+        let allocated_view_ctrl = mtm.alloc::<UIViewController>();
+        let view_ctrl_obj = UIViewController::init(allocated_view_ctrl);
+        view_ctrl_obj.presentModalViewController_animated(&**picker, true);
+        delegate
+    }
+}
+
+// Placeholder for the availability check, not sure how to do it in objc2 yetc
+fn available(_version: &str) -> bool {
+    true
+}
 
 // unsafe impl FileDialog {
 //     #[sel(init)]
@@ -248,5 +498,62 @@ impl AsyncFilePickerDialogImpl for FileDialog {
 
 //     fn save_image_to_temp(&self, image: Id<Object, Shared>) {
 //         // Logic to save the UIImage to a temp directory
+//     }
+// }
+
+// struct PickerDelegate;
+//
+// impl PickerDelegate {
+//     // Implement the delegate method
+//     extern "C" fn document_picker_did_pick_documents_at_urls(
+//         &self,
+//         _picker: *mut Object,
+//         _cmd: Sel,
+//         _document_picker: *mut Object,
+//         urls: *mut Object, // NSArray<NSURL *> *
+//     ) {
+//         unsafe {
+//             // Get the first URL from the array
+//             let url: *mut Object = msg_send![urls, firstObject];
+//             // Start accessing security scoped resource
+//             let need_close: bool = msg_send![url, startAccessingSecurityScopedResource];
+//
+//             // Initialize error pointer
+//             let mut error: *mut Object = std::ptr::null_mut();
+//             // Read data from the URL
+//             let data: *mut NSData = msg_send![NSData::class(), dataWithContentsOfURL: url options: 2 error: &mut error as *mut _];
+//
+//             if need_close {
+//                 // Stop accessing security scoped resource
+//                 let _: () = msg_send![url, stopAccessingSecurityScopedResource];
+//             }
+//
+//             if data.is_null() {
+//                 // Handle read failure
+//                 show_message(ttl("read-file-failed")).error();
+//                 if !error.is_null() {
+//                     let msg: *const NSString = msg_send![error, localizedDescription];
+//                     let msg_str = (*msg).as_str(); // Assuming as_str() is safe and implemented
+//                     show_error(&Error::msg(msg_str).context(ttl("read-file-failed")));
+//                 }
+//             } else {
+//                 // Get temporary directory
+//                 extern "C" {
+//                     fn NSTemporaryDirectory() -> *mut NSString;
+//                 }
+//                 let dir = NSTemporaryDirectory();
+//                 // Generate UUID
+//                 let uuid: *mut NSUUID = msg_send![NSUUID::class(), UUID];
+//                 let uuid_str: *mut NSString = msg_send![uuid, UUIDString];
+//
+//                 // Create file path
+//                 let path = format!("{}{}", (*dir).as_str(), (*uuid_str).as_str());
+//                 // Write data to file
+//                 let _: () = msg_send![data, writeToFile: str_to_ns(&path) atomically: YES_CONST];
+//
+//                 // Update the chosen file path
+//                 CHOSEN_FILE.lock().unwrap().1 = Some(path);
+//             }
+//         }
 //     }
 // }

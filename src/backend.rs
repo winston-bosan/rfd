@@ -46,7 +46,6 @@ mod win_cid;
     not(feature = "gtk3")
 ))]
 mod xdg_desktop_portal;
-
 //
 // Sync
 //

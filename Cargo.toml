@@ -27,6 +27,8 @@ futures = "0.3.12"
 [dependencies]
 raw-window-handle = "0.6"
 log = "0.4"
+once_cell = "1.19.0"
+lazy_static = "1.5.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.5.0"
@@ -73,6 +75,7 @@ objc2-ui-kit = { version = "0.2.2", features = [
   "UIImagePickerController",
   "objc2-uniform-type-identifiers"  
 ] }
+objc2-uniform-type-identifiers = { version = "0.2.2", features = ["UTType", "default"] }
 
 
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -783,6 +783,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "lazy_static"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
 name = "libc"
 version = "0.2.153"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1277,11 +1283,14 @@ dependencies = [
  "gobject-sys",
  "gtk-sys",
  "js-sys",
+ "lazy_static",
  "log",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-ui-kit",
+ "objc2-uniform-type-identifiers",
+ "once_cell",
  "pollster",
  "raw-window-handle",
  "urlencoding",
