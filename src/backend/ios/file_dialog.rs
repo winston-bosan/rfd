@@ -1,25 +1,21 @@
 use crate::{FileDialog, FileHandle, MessageDialog, MessageDialogResult};
-use objc2::msg_send;
-use objc2::rc::{autoreleasepool, Id};
-use objc2::runtime::{NSZone, Object, Sel, YES as YES_CONST};
+use objc2::rc::autoreleasepool;
 use objc2::ClassType;
-use objc2_foundation::{MainThreadMarker, NSArray, NSData, NSString, NSURL};
+use objc2::{msg_send, Encode, Encoding};
+use objc2_foundation::{MainThreadMarker, NSArray, NSString, NSURL};
 use objc2_ui_kit::{
     self as ui_kit, UIDocumentPickerDelegate, UIDocumentPickerViewController, UIViewController,
 };
+use std::cell::RefCell;
 use std::path::PathBuf;
-use std::ptr;
 
-// Assuming you have these utilities defined elsewhere
-use lazy_static::lazy_static;
 use objc2_uniform_type_identifiers::UTType;
 use std::sync::Mutex;
 
-use objc2::__framework_prelude::{IsMainThreadOnly, ProtocolObject};
+use objc2::__framework_prelude::ProtocolObject;
 use objc2::rc::{Allocated, Retained};
 use objc2::{declare_class, msg_send_id, mutability, DeclaredClass};
-use objc2::encode::OptionEncode;
-use objc2_foundation::{NSCopying, NSObject, NSObjectProtocol};
+use objc2_foundation::{NSObject, NSObjectProtocol};
 
 // Module lvl static file marker, not the proudest moment of my life
 pub static CHOSEN_FILE: Mutex<(Option<String>, Option<String>)> = Mutex::new((None, None));
@@ -32,11 +28,23 @@ fn u8_slice_to_string<const C: usize>(n: [u8; C]) -> String {
     vec
 }
 
-// Ref encode
-unsafe impl OptionEncode for [u8; 200] {
-
+fn u8_slice_to_path<const C: usize>(n: [u8; C]) -> PathBuf {
+    let string  = u8_slice_to_string(n);
+    string.into()
 }
 
+#[derive(Clone)]
+pub struct FilePath(Option<[u8; 200]>);
+impl From<[u8; 200]> for FilePath{
+    fn from(value: [u8; 200]) -> Self {
+        todo!()
+    }
+}
+
+// Ref encode
+unsafe impl Encode for FilePath {
+    const ENCODING: Encoding = todo!();
+}
 
 impl FilePickerDialogImpl for FileDialog {
     fn pick_file(self) -> Option<PathBuf> {
@@ -45,7 +53,7 @@ impl FilePickerDialogImpl for FileDialog {
                 let callback_checker = present_document_picker(mtm);
 
                 // VERY DUMB
-                if let Some(history) = callback_checker.get_uri_history() {
+                if let Some(history) = callback_checker.get_uri_history().0 {
                     Some(u8_slice_to_string(history).into())
                 // JUST JANK FOR NOW
                 } else {
@@ -68,11 +76,12 @@ impl AsyncFilePickerDialogImpl for FileDialog {
             run_on_ios_main(move |mtm| {
                 let callback_checker = present_document_picker(mtm);
                 loop {
-                    if let Some(history) = callback_checker.get_uri_history() {
-                        return u8_slice_to_string(history).into()
+                    if let Some(history) = callback_checker.get_uri_history().0 {
+                        return Some(u8_slice_to_path(history).into())
                     }
                 }
-            });
+
+            })
         };
 
         Box::pin(pre_pack_future)
@@ -141,7 +150,7 @@ impl AsyncMessageDialogImpl for MessageDialog {
 
 #[derive(Clone)]
 struct UriHistory {
-    last_uri: Option<[u8; 200]>,
+    last_uri: RefCell<FilePath>,
 }
 
 impl UIDocPickerDelegate {
@@ -171,20 +180,20 @@ declare_class!(
         #[method_id(init:)]
         fn init_with(this: Allocated<Self>) -> Option<Retained<Self>> {
             let this = this.set_ivars(UriHistory {
-                last_uri: Some([0;200]),
+                last_uri: RefCell::new(FilePath(Some([0;200])).into()),
             });
             unsafe { msg_send_id![super(this), init] }
         }
 
         #[method(get_history)]
-        fn __get_history(&self) -> Option<[u8; 200]> {
-            self.ivars().last_uri.clone()
+        fn __get_history(&self) -> FilePath {
+            self.ivars().last_uri.clone().borrow().clone()
         }
 
         #[method(set_history)]
-        fn __set_history(&mut self, new_history: [u8; 200]) {
-            let a = self.ivars_mut();
-            a.last_uri = Some(new_history);
+        fn __set_history(&self, new_history: [u8; 200]) {
+            let a = self.ivars();
+            *a.last_uri.borrow_mut() = FilePath(Some(new_history)).into();
         }
 
     }
@@ -194,7 +203,7 @@ declare_class!(
     unsafe impl UIDocumentPickerDelegate for UIDocPickerDelegate {
         #[method(documentPicker:didPickDocumentsAtURLs:)]
         unsafe fn documentPicker_didPickDocumentsAtURLs(
-            &mut self,
+            &self,
             controller: &UIDocumentPickerViewController,
             urls: &NSArray<NSURL>,
         ) {
@@ -202,8 +211,8 @@ declare_class!(
             unsafe {
                 // Get the first selected URL
                 let selected_url:Retained<NSURL> = (*urls).firstObject().unwrap();
-                let ivar_mut = self.ivars_mut();
-                ivar_mut.last_uri = <[u8; 200]>::try_from(selected_url.path().unwrap().to_string().as_bytes()).unwrap();
+                // let ivar_mut = self.ivars_mut();
+                // ivar_mut.last_uri = <[u8; 200]>::try_from(selected_url.path().unwrap().to_string().as_bytes()).unwrap();
                 println!("({:?})", &selected_url);
 
                 // if !selected_url.clone().isFileURL() {
@@ -253,11 +262,11 @@ impl UIDocPickerDelegate {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         unsafe { msg_send_id![mtm.alloc::<UIDocPickerDelegate>(), init] }
     }
-    pub fn get_uri_history(&self) -> Option<[u8; 200]> {
+    pub fn get_uri_history(&self) -> FilePath {
         unsafe { msg_send![self, get_history] }
     }
 
-    pub fn set_uri_history(&mut self, new_history: [u8; 200]) {
+    pub fn set_uri_history(&self, new_history: [u8; 200]) {
         unsafe { msg_send![self, set_history: new_history] }
     }
 }
@@ -314,7 +323,6 @@ impl Error {
 
 // Function to present the document picker
 fn present_document_picker(mtm: MainThreadMarker) -> Retained<UIDocPickerDelegate> {
-    use objc2::rc::Id;
     use objc2_ui_kit::UIDocumentPickerViewController;
     use objc2_uniform_type_identifiers;
 
