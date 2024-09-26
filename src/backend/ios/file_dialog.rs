@@ -35,15 +35,15 @@ fn u8_slice_to_path<const C: usize>(n: [u8; C]) -> PathBuf {
 
 #[derive(Clone)]
 pub struct FilePath(Option<[u8; 200]>);
-impl From<[u8; 200]> for FilePath{
+impl From<[u8; 200]> for FilePath {
     fn from(value: [u8; 200]) -> Self {
-        todo!()
+        FilePath(Some(value))
     }
 }
 
 // Ref encode
 unsafe impl Encode for FilePath {
-    const ENCODING: Encoding = todo!();
+    const ENCODING: Encoding = Encoding::Object;
 }
 
 impl FilePickerDialogImpl for FileDialog {
@@ -207,54 +207,34 @@ declare_class!(
             controller: &UIDocumentPickerViewController,
             urls: &NSArray<NSURL>,
         ) {
-            // TODO: Temporary place holder to test if this impl compiles or not
-            unsafe {
-                // Get the first selected URL
-                let selected_url:Retained<NSURL> = (*urls).firstObject().unwrap();
-                // let ivar_mut = self.ivars_mut();
-                // ivar_mut.last_uri = <[u8; 200]>::try_from(selected_url.path().unwrap().to_string().as_bytes()).unwrap();
-                println!("({:?})", &selected_url);
-
-                // if !selected_url.clone().isFileURL() {
-                //     // Start accessing the security scoped resource
-                //     let access_granted: bool = msg_send![selected_url.clone(), startAccessingSecurityScopedResource];
-                //
-                //     if access_granted {
-                //         // Read the file content as a string
-                //         let ns_string: *mut NSString = msg_send![NSString, stringWithContentsOfURL:selected_url encoding:4 /* NSUTF8StringEncoding */ error:ptr::null_mut()];
-                //         // Stop accessing the resource
-                //         msg_send![selected_url, stopAccessingSecurityScopedResource];
-                //
-                //         if !ns_string.is_null() {
-                //             // Convert NSString to Rust String
-                //             let rust_str: String = ns_string.to_string();
-                //             println!("({})", &rust_str);
-                //         } else {
-                //             // Handle read error
-                //             println!("Error - Failed to read the file content.");
-                //         }
-                //     } else {
-                //         // Handle access denial
-                //         println!("Error - Failed to access the selected file.");
-                //     }
-                // }
+            if let Some(selected_url) = urls.firstObject() {
+                println!("Selected URL: {:?}", selected_url);
+                if let Some(path) = selected_url.path() {
+                    if let Ok(bytes) = <[u8; 200]>::try_from(path.as_bytes()) {
+                        self.set_uri_history(bytes);
+                    }
+                }
             }
         }
 
         #[method(documentPickerWasCancelled:)]
-        unsafe fn documentPickerWasCancelled(&self, controller: &UIDocumentPickerViewController){
-
+        unsafe fn documentPickerWasCancelled(&self, _controller: &UIDocumentPickerViewController) {
+            println!("Document picker was cancelled");
         }
 
         #[method(documentPicker:didPickDocumentAtURL:)]
         unsafe fn documentPicker_didPickDocumentAtURL(
             &self,
-            controller: &UIDocumentPickerViewController,
+            _controller: &UIDocumentPickerViewController,
             url: &NSURL,
-        ){
-
+        ) {
+            println!("Selected single document URL: {:?}", url);
+            if let Some(path) = url.path() {
+                if let Ok(bytes) = <[u8; 200]>::try_from(path.as_bytes()) {
+                    self.set_uri_history(bytes);
+                }
+            }
         }
-
     }
 );
 
@@ -324,36 +304,33 @@ impl Error {
 // Function to present the document picker
 fn present_document_picker(mtm: MainThreadMarker) -> Retained<UIDocPickerDelegate> {
     use objc2_ui_kit::UIDocumentPickerViewController;
-    use objc2_uniform_type_identifiers;
+    use objc2_uniform_type_identifiers::UTType;
 
     unsafe {
-        // Initialize the PickerDelegate instance
         let delegate = UIDocPickerDelegate::new(mtm);
 
-        // Create the UIDocumentPickerViewController
         let picker = if available("14.0.0") {
-            let csv = UTType::typeWithFilenameExtension(&*NSString::from_str("csv")).unwrap();
-            let pleco = UTType::typeWithFilenameExtension(&*NSString::from_str("pleco")).unwrap();
-            let apkg = UTType::typeWithFilenameExtension(&*NSString::from_str("apkg")).unwrap();
+            let csv = UTType::typeWithFilenameExtension(&NSString::from_str("csv")).unwrap();
+            let pleco = UTType::typeWithFilenameExtension(&NSString::from_str("pleco")).unwrap();
+            let apkg = UTType::typeWithFilenameExtension(&NSString::from_str("apkg")).unwrap();
 
-            let types = NSArray::from_slice(&[csv.as_ref(), pleco.as_ref(), apkg.as_ref()]);
+            let types = NSArray::from_slice(&[csv, pleco, apkg]);
             let allocated_picker = mtm.alloc::<UIDocumentPickerViewController>();
-            // let picker_init  = UIDocumentPickerViewController::init(allocated_picker);
-
             UIDocumentPickerViewController::initForOpeningContentTypes(allocated_picker, &types)
         } else {
-            panic!()
+            panic!("iOS version not supported")
         };
 
-        // Set the delegate and do the protocol cast
         let ui_doc_picker_dyn_protocol_obj: &ProtocolObject<dyn UIDocumentPickerDelegate> =
             ProtocolObject::from_ref(&*delegate);
-        picker.setDelegate(Option::from(ui_doc_picker_dyn_protocol_obj));
+        picker.setDelegate(Some(ui_doc_picker_dyn_protocol_obj));
 
-        // Get the current view controller (so jank I am shitting myself)
-        let allocated_view_ctrl = mtm.alloc::<UIViewController>();
-        let view_ctrl_obj = UIViewController::init(allocated_view_ctrl);
-        view_ctrl_obj.presentModalViewController_animated(&**picker, true);
+        if let Some(root_view_controller) = ui_kit::UIApplication::sharedApplication().keyWindow().and_then(|window| window.rootViewController()) {
+            root_view_controller.presentViewController_animated_completion(&picker, true, None);
+        } else {
+            println!("Failed to get root view controller");
+        }
+
         delegate
     }
 }
