@@ -210,7 +210,7 @@ declare_class!(
             if let Some(selected_url) = urls.firstObject() {
                 println!("Selected URL: {:?}", selected_url);
                 if let Some(path) = selected_url.path() {
-                    if let Ok(bytes) = <[u8; 200]>::try_from(path.as_bytes()) {
+                    if let Ok(bytes) = <[u8; 200]>::try_from(path.to_string().as_bytes()) {
                         self.set_uri_history(bytes);
                     }
                 }
@@ -230,7 +230,7 @@ declare_class!(
         ) {
             println!("Selected single document URL: {:?}", url);
             if let Some(path) = url.path() {
-                if let Ok(bytes) = <[u8; 200]>::try_from(path.as_bytes()) {
+                if let Ok(bytes) = <[u8; 200]>::try_from(path.to_string().as_bytes()) {
                     self.set_uri_history(bytes);
                 }
             }
@@ -310,12 +310,13 @@ fn present_document_picker(mtm: MainThreadMarker) -> Retained<UIDocPickerDelegat
         let delegate = UIDocPickerDelegate::new(mtm);
 
         let picker = if available("14.0.0") {
-            let csv = UTType::typeWithFilenameExtension(&NSString::from_str("csv")).unwrap();
-            let pleco = UTType::typeWithFilenameExtension(&NSString::from_str("pleco")).unwrap();
-            let apkg = UTType::typeWithFilenameExtension(&NSString::from_str("apkg")).unwrap();
+            let csv = UTType::typeWithFilenameExtension(&*NSString::from_str("csv")).unwrap();
+            let pleco = UTType::typeWithFilenameExtension(&*NSString::from_str("pleco")).unwrap();
+            let apkg = UTType::typeWithFilenameExtension(&*NSString::from_str("apkg")).unwrap();
 
-            let types = NSArray::from_slice(&[csv, pleco, apkg]);
+            let types = NSArray::from_slice(&[csv.as_ref(), pleco.as_ref(), apkg.as_ref()]);
             let allocated_picker = mtm.alloc::<UIDocumentPickerViewController>();
+
             UIDocumentPickerViewController::initForOpeningContentTypes(allocated_picker, &types)
         } else {
             panic!("iOS version not supported")
@@ -325,7 +326,8 @@ fn present_document_picker(mtm: MainThreadMarker) -> Retained<UIDocPickerDelegat
             ProtocolObject::from_ref(&*delegate);
         picker.setDelegate(Some(ui_doc_picker_dyn_protocol_obj));
 
-        if let Some(root_view_controller) = ui_kit::UIApplication::sharedApplication().keyWindow().and_then(|window| window.rootViewController()) {
+        // TODO: Very deprecated, plz fix
+        if let Some(root_view_controller) = ui_kit::UIApplication::sharedApplication(mtm).keyWindow().and_then(|window| window.rootViewController()) {
             root_view_controller.presentViewController_animated_completion(&picker, true, None);
         } else {
             println!("Failed to get root view controller");

@@ -73,7 +73,10 @@ objc2-ui-kit = { version = "0.2.2", features = [
   "UIViewController",
   "UIResponder",
   "UIImagePickerController",
-  "objc2-uniform-type-identifiers"  
+  "objc2-uniform-type-identifiers",
+  "UIWindow",
+  "UIView",
+  "block2"
 ] }
 objc2-uniform-type-identifiers = { version = "0.2.2", features = ["UTType", "default"] }
 
