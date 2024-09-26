@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-use std::ptr;
 use crate::{FileDialog, FileHandle, MessageDialog, MessageDialogResult};
 use objc2::msg_send;
 use objc2::rc::{autoreleasepool, Id};
@@ -9,6 +7,8 @@ use objc2_foundation::{MainThreadMarker, NSArray, NSData, NSString, NSURL};
 use objc2_ui_kit::{
     self as ui_kit, UIDocumentPickerDelegate, UIDocumentPickerViewController, UIViewController,
 };
+use std::path::PathBuf;
+use std::ptr;
 
 // Assuming you have these utilities defined elsewhere
 use lazy_static::lazy_static;
@@ -18,20 +18,36 @@ use std::sync::Mutex;
 use objc2::__framework_prelude::{IsMainThreadOnly, ProtocolObject};
 use objc2::rc::{Allocated, Retained};
 use objc2::{declare_class, msg_send_id, mutability, DeclaredClass};
+use objc2::encode::OptionEncode;
 use objc2_foundation::{NSCopying, NSObject, NSObjectProtocol};
 
 // Module lvl static file marker, not the proudest moment of my life
 pub static CHOSEN_FILE: Mutex<(Option<String>, Option<String>)> = Mutex::new((None, None));
 
 use crate::backend::FilePickerDialogImpl;
+
+// Helper Const Generics to deal with slices
+fn u8_slice_to_string<const C: usize>(n: [u8; C]) -> String {
+    let vec = n.into_iter().map(|t| t as char).collect();
+    vec
+}
+
+// Ref encode
+unsafe impl OptionEncode for [u8; 200] {
+
+}
+
+
 impl FilePickerDialogImpl for FileDialog {
     fn pick_file(self) -> Option<PathBuf> {
         autoreleasepool(move |_| {
             run_on_ios_main(move |mtm| {
                 let callback_checker = present_document_picker(mtm);
 
-                if callback_checker.get_uri_history() == 0 {
-                    Some(callback_checker.get_uri_history().to_string().into()) // JUST JANK FOR NOW
+                // VERY DUMB
+                if let Some(history) = callback_checker.get_uri_history() {
+                    Some(u8_slice_to_string(history).into())
+                // JUST JANK FOR NOW
                 } else {
                     None
                 }
@@ -45,9 +61,21 @@ impl FilePickerDialogImpl for FileDialog {
 }
 
 use crate::backend::AsyncFilePickerDialogImpl;
+
 impl AsyncFilePickerDialogImpl for FileDialog {
     fn pick_file_async(self) -> DialogFutureType<Option<FileHandle>> {
-        todo!()
+        let pre_pack_future = async {
+            run_on_ios_main(move |mtm| {
+                let callback_checker = present_document_picker(mtm);
+                loop {
+                    if let Some(history) = callback_checker.get_uri_history() {
+                        return u8_slice_to_string(history).into()
+                    }
+                }
+            });
+        };
+
+        Box::pin(pre_pack_future)
     }
 
     fn pick_files_async(self) -> DialogFutureType<Option<Vec<FileHandle>>> {
@@ -95,7 +123,6 @@ impl AsyncFileSaveDialogImpl for FileDialog {
 
 // --- Message Dialog Temp ---
 
-
 use crate::backend::MessageDialogImpl;
 
 use crate::backend::AsyncMessageDialogImpl;
@@ -114,11 +141,11 @@ impl AsyncMessageDialogImpl for MessageDialog {
 
 #[derive(Clone)]
 struct UriHistory {
-    last_uri: [u8; 200],
+    last_uri: Option<[u8; 200]>,
 }
 
 impl UIDocPickerDelegate {
-    fn report_uri_retrieved() -> Option<String> {
+    fn report_uri_retrieved(&self) -> Option<String> {
         todo!()
     }
 }
@@ -128,7 +155,7 @@ declare_class!(
 
     // SAFETY:
     // - The superclass NSObject does not have any subclassing requirements.
-    // - Interior mutability is a safe default, but we need .
+    // - Interior mutability is a safe default, but we need mainthreatonly because it deals with UI.
     // - `UIDocPickerDelegate` does not implement `Drop`.
     unsafe impl ClassType for UIDocPickerDelegate {
         type Super = NSObject;
@@ -144,15 +171,22 @@ declare_class!(
         #[method_id(init:)]
         fn init_with(this: Allocated<Self>) -> Option<Retained<Self>> {
             let this = this.set_ivars(UriHistory {
-                last_uri: [0;200],
+                last_uri: Some([0;200]),
             });
             unsafe { msg_send_id![super(this), init] }
         }
 
         #[method(get_history)]
-        fn __get_history(&self) -> [u8; 200] {
+        fn __get_history(&self) -> Option<[u8; 200]> {
             self.ivars().last_uri.clone()
         }
+
+        #[method(set_history)]
+        fn __set_history(&mut self, new_history: [u8; 200]) {
+            let a = self.ivars_mut();
+            a.last_uri = Some(new_history);
+        }
+
     }
 
     unsafe impl NSObjectProtocol for UIDocPickerDelegate {}
@@ -160,7 +194,7 @@ declare_class!(
     unsafe impl UIDocumentPickerDelegate for UIDocPickerDelegate {
         #[method(documentPicker:didPickDocumentsAtURLs:)]
         unsafe fn documentPicker_didPickDocumentsAtURLs(
-            &self,
+            &mut self,
             controller: &UIDocumentPickerViewController,
             urls: &NSArray<NSURL>,
         ) {
@@ -168,8 +202,8 @@ declare_class!(
             unsafe {
                 // Get the first selected URL
                 let selected_url:Retained<NSURL> = (*urls).firstObject().unwrap();
-                // Convert NSString to Rust String -> todo!()
-                // let rust_str: String = selected_url.to_string();
+                let ivar_mut = self.ivars_mut();
+                ivar_mut.last_uri = <[u8; 200]>::try_from(selected_url.path().unwrap().to_string().as_bytes()).unwrap();
                 println!("({:?})", &selected_url);
 
                 // if !selected_url.clone().isFileURL() {
@@ -219,11 +253,12 @@ impl UIDocPickerDelegate {
     pub fn new(mtm: MainThreadMarker) -> Retained<Self> {
         unsafe { msg_send_id![mtm.alloc::<UIDocPickerDelegate>(), init] }
     }
-
-
-
-    pub fn get_uri_history(&self) -> u8 {
+    pub fn get_uri_history(&self) -> Option<[u8; 200]> {
         unsafe { msg_send![self, get_history] }
+    }
+
+    pub fn set_uri_history(&mut self, new_history: [u8; 200]) {
+        unsafe { msg_send![self, set_history: new_history] }
     }
 }
 
@@ -243,9 +278,8 @@ struct FileDialogParams {
     file_extensions_filter: Option<Vec<String>>,
 }
 
-use crate::backend::{DialogFutureType};
 use crate::backend::ios::util::run_on_ios_main;
-
+use crate::backend::DialogFutureType;
 
 // Placeholder for your error handling and other utilities
 fn show_message(msg: &str) {
@@ -289,7 +323,7 @@ fn present_document_picker(mtm: MainThreadMarker) -> Retained<UIDocPickerDelegat
         let delegate = UIDocPickerDelegate::new(mtm);
 
         // Create the UIDocumentPickerViewController
-        let picker  = if available("14.0.0") {
+        let picker = if available("14.0.0") {
             let csv = UTType::typeWithFilenameExtension(&*NSString::from_str("csv")).unwrap();
             let pleco = UTType::typeWithFilenameExtension(&*NSString::from_str("pleco")).unwrap();
             let apkg = UTType::typeWithFilenameExtension(&*NSString::from_str("apkg")).unwrap();
