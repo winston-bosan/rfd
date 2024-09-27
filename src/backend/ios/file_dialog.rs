@@ -190,7 +190,7 @@ declare_class!(
             self.ivars().last_uri.clone().borrow().clone()
         }
 
-        #[method(set_history)]
+        #[method(set_history:)]
         fn __set_history(&self, new_history: [u8; 200]) {
             let a = self.ivars();
             *a.last_uri.borrow_mut() = FilePath(Some(new_history)).into();
