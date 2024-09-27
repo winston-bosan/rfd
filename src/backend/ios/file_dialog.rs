@@ -29,7 +29,7 @@ fn u8_slice_to_string<const C: usize>(n: [u8; C]) -> String {
 }
 
 fn u8_slice_to_path<const C: usize>(n: [u8; C]) -> PathBuf {
-    let string  = u8_slice_to_string(n);
+    let string = u8_slice_to_string(n);
     string.into()
 }
 
@@ -77,10 +77,9 @@ impl AsyncFilePickerDialogImpl for FileDialog {
                 let callback_checker = present_document_picker(mtm);
                 loop {
                     if let Some(history) = callback_checker.get_uri_history().0 {
-                        return Some(u8_slice_to_path(history).into())
+                        return Some(u8_slice_to_path(history).into());
                     }
                 }
-
             })
         };
 
@@ -327,7 +326,15 @@ fn present_document_picker(mtm: MainThreadMarker) -> Retained<UIDocPickerDelegat
         picker.setDelegate(Some(ui_doc_picker_dyn_protocol_obj));
 
         // TODO: Very deprecated, plz fix
-        if let Some(root_view_controller) = ui_kit::UIApplication::sharedApplication(mtm).keyWindow().and_then(|window| window.rootViewController()) {
+        if let Some(root_view_controller) = ui_kit::UIApplication::sharedApplication(mtm)
+            .keyWindow()
+            .and_then(|window| window.rootViewController())
+        {
+            root_view_controller.setModalPresentationStyle(
+                ui_kit::UIModalPresentationStyle::UIModalPresentationFullScreen,
+            );
+            root_view_controller
+                .setModalTransitionStyle(ui_kit::UIModalTransitionStyle::CrossDissolve);
             root_view_controller.presentViewController_animated_completion(&picker, true, None);
         } else {
             println!("Failed to get root view controller");
