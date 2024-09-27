@@ -177,7 +177,7 @@ declare_class!(
     }
 
     unsafe impl UIDocPickerDelegate {
-        #[method_id(init:)]
+        #[method_id(init)]
         fn init_with(this: Allocated<Self>) -> Option<Retained<Self>> {
             let this = this.set_ivars(UriHistory {
                 last_uri: RefCell::new(FilePath(Some([0;200])).into()),
